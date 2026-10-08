@@ -96,3 +96,91 @@ def fetch_live_team_matches(team_id: int, sport: SportType, limit: int = 5) -> l
         return []
 
     return [parse_pandascore_match(m, sport) for m in res.json()]
+
+FOOTBALL_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY")
+FOOTBALL_BASE_URL = "https://api.football-data.org/v4"
+
+def map_football_status(raw_status: str | None) -> MatchStatus:
+    status = (raw_status or "").upper()
+    if status in ["IN_PLAY", "PAUSED"]:
+        return MatchStatus.LIVE
+    elif status in ["FINISHED", "AWARDED"]:
+        return MatchStatus.FINISHED
+    return MatchStatus.UPCOMING
+
+def parse_football_match(raw_match: dict) -> NormalisedMatch:
+    home_raw = raw_match.get("homeTeam", {})
+    away_raw = raw_match.get("awayTeam", {})
+    score_data = raw_match.get("score", {})
+
+    # Check fullTime first, fallback to regularTime if present
+    full_time = score_data.get("fullTime") or {}
+    regular_time = score_data.get("regularTime") or {}
+
+    home_score = full_time.get("home")
+    if home_score is None:
+        home_score = regular_time.get("home", 0)
+
+    away_score = full_time.get("away")
+    if away_score is None:
+        away_score = regular_time.get("away", 0)
+
+    # Determine winner team ID or DRAW
+    winner_str = score_data.get("winner")
+    winner_id = None
+    if winner_str == "HOME_TEAM":
+        winner_id = str(home_raw.get("id"))
+    elif winner_str == "AWAY_TEAM":
+        winner_id = str(away_raw.get("id"))
+    elif winner_str == "DRAW":
+        winner_id = "DRAW"
+
+    return NormalisedMatch(
+        id = f"football-{raw_match.get('id')}",
+        sport = SportType.FOOTBALL,
+        tournament_name = raw_match.get("competition", {}).get(
+            "name", "Premier League"
+        ),
+        home_team = TeamBasic(
+            id = str(home_raw.get("id", "0")),
+            name = home_raw.get("name", "TBD"),
+            acronym = home_raw.get("tla"),
+            logo_url = home_raw.get("crest"),
+        ),
+        away_team = TeamBasic(
+            id = str(away_raw.get("id", "0")),
+            name = away_raw.get("name", "TBD"),
+            acronym = away_raw.get("tla"),
+            logo_url = away_raw.get("crest"),
+        ),
+        home_score = home_score or 0,
+        away_score = away_score or 0,
+        status = map_football_status(raw_match.get("status")),
+        scheduled_at_sgt = format_to_sgt(raw_match.get("utcDate")),
+        winner_team_id = winner_id,
+    )
+
+def fetch_live_football_matches(team_id: int = 66, limit: int = 2) -> list[NormalisedMatch]:
+    if not FOOTBALL_API_KEY:
+        return []
+
+    url = f"{FOOTBALL_BASE_URL}/teams/{team_id}/matches"
+    headers = {"X-Auth-Token": FOOTBALL_API_KEY.strip()}
+    matches = []
+
+    # 1. Fetch the immediate next scheduled match
+    upcoming_res = requests.get(url, headers=headers, params={"status": "SCHEDULED", "limit": 1})
+    if upcoming_res.status_code == 200:
+        scheduled = upcoming_res.json().get("matches", [])
+        if scheduled:
+            # Grab the very next match on the calendar
+            matches.append(parse_football_match(scheduled[0]))
+
+    # 2. Fetch the most recent finished match
+    past_res = requests.get(url, headers=headers, params={"status": "FINISHED", "limit": 10})
+    if past_res.status_code == 200:
+        finished = past_res.json().get("matches", [])
+        if finished:
+            matches.append(parse_football_match(finished[-1]))
+
+    return matches

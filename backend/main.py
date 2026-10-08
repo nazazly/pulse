@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from typing import List
 from schemas import NormalisedMatch, SportType
-from services import fetch_live_team_matches
+from services import fetch_live_team_matches, fetch_live_football_matches
 
 app = FastAPI(
     title = "Pulse API",
@@ -12,7 +12,8 @@ app = FastAPI(
 # Known demo IDs for quick recruiter demonstration
 DEMO_TEAMS = {
     "navi": {"id": 3216, "sport": SportType.CS2},
-    "prx": {"id": 128917, "sport": SportType.VALORANT}
+    "prx": {"id": 128917, "sport": SportType.VALORANT},
+    "manutd": {"id": 66, "sport": SportType.FOOTBALL}
 }
 
 @app.get("/")
@@ -28,7 +29,13 @@ def get_team_matches(
     """
     Fetches and normalises real-time fixtures & results for any team ID.
     """
-    matches = fetch_live_team_matches(team_id=team_id, sport=sport, limit=limit)
+    if sport == SportType.FOOTBALL:
+        matches = fetch_live_football_matches(team_id=team_id, limit=limit)
+    else:
+        matches = fetch_live_team_matches(
+            team_id=team_id, sport=sport, limit=limit
+        )
+
     if not matches:
         raise HTTPException(status_code=404, detail="No matches found or upstream API error.")
     return matches
@@ -39,6 +46,23 @@ def get_demo_feed():
     Aggregated feed of favourite teams (NAVI CS2, Paper Rex Valorant) in one unified list.
     """
     feed = []
-    feed.extend(fetch_live_team_matches(DEMO_TEAMS["navi"]["id"], DEMO_TEAMS["navi"]["sport"], limit=3))
-    feed.extend(fetch_live_team_matches(DEMO_TEAMS["prx"]["id"], DEMO_TEAMS["prx"]["sport"], limit=3))
+
+    # 1. NAVI (CS2)
+    feed.extend(
+        fetch_live_team_matches(
+            DEMO_TEAMS["navi"]["id"], DEMO_TEAMS["navi"]["sport"], limit=2
+        )
+    )
+
+    # 2. PRX (VALORANT)
+    feed.extend(
+        fetch_live_team_matches(
+            DEMO_TEAMS["prx"]["id"], DEMO_TEAMS["prx"]["sport"], limit=2
+        )
+    )
+
+    # 3. Manchester United (FOOTBALL)
+    feed.extend(
+        fetch_live_football_matches(DEMO_TEAMS["manutd"]["id"], limit=2)
+    )
     return feed
